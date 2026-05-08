@@ -10,8 +10,9 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # 讀取資料
-        return conn.read(ttl=0)
+        # 讀取資料並轉為 DataFrame
+        df = conn.read(ttl=0)
+        return df
     except:
         return pd.DataFrame(columns=["日期", "類型", "金額", "項目", "分類", "餘額"])
 
@@ -19,26 +20,28 @@ df = load_data()
 
 st.title("👫 我們的甜蜜帳本")
 
-# 計算資訊
+# 資料清理與計算
 balance = 0
 monthly_exp = 0
 if not df.empty:
-    # 確保金額是數字格式
+    # 確保數值欄位正確
     df['金額'] = pd.to_numeric(df['金額'], errors='coerce').fillna(0)
     df['餘額'] = pd.to_numeric(df['餘額'], errors='coerce').fillna(0)
     balance = df["餘額"].iloc[-1]
     
     this_month = datetime.now().strftime("%Y-%m")
-    monthly_exp = df[(df['日期'].astype(str).str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum()
+    # 確保日期欄位為字串
+    df['日期'] = df['日期'].astype(str)
+    monthly_exp = df[(df['日期'].str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum()
 
-# 顯示看板
+# 看板顯示
 c1, c2 = st.columns(2)
 c1.metric("目前帳戶餘額", f"${balance:,.0f}")
 c2.metric("本月總消費", f"${monthly_exp:,.0f}")
 
 st.divider()
 
-# 輸入區表單
+# 輸入區
 with st.form("input_form", clear_on_submit=True):
     date = st.date_input("選擇日期", datetime.now())
     r_type = st.radio("交易類型", ["支出", "存款"], horizontal=True)
@@ -59,15 +62,17 @@ if submit:
             "餘額": float(new_balance)
         }])
         
-        # 重新組合所有資料
+        # 組合並更新 (關鍵修正：確保 index=False)
         updated_df = pd.concat([df, new_row], ignore_index=True)
         
-        # 使用最新的更新語法
-        conn.update(data=updated_df)
-        
-        st.success("成功存入 Google 雲端！")
-        st.cache_data.clear() # 清除緩存確保下次讀取最新資料
-        st.rerun()
+        try:
+            # 強制寫入
+            conn.update(data=updated_df)
+            st.success("成功存入 Google 雲端！")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error("寫入失敗。請檢查 Secrets 裡的網址是否包含 /edit")
     else:
         st.error("請填寫完整資訊！")
 
