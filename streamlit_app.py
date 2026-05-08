@@ -17,11 +17,11 @@ except:
 @st.cache_data(ttl=1)
 def load_data(url):
     try:
-        csv_url = url.split('/edit')[0] + '/export?format=csv&gid=0'
-        csv_url += f"&refresh={random.randint(1, 99999)}"
+        # ... 原本的網址轉換 ...
         data = pd.read_csv(csv_url)
-        # 確保數值轉換，避免公式讀取時出現字串
+        
         if not data.empty:
+            # 強制將金額與餘額轉為數字，出錯就變 0
             data['金額'] = pd.to_numeric(data['金額'], errors='coerce').fillna(0)
             data['餘額'] = pd.to_numeric(data['餘額'], errors='coerce').fillna(0)
         return data
