@@ -13,14 +13,17 @@ try:
     API_URL = st.secrets["API_URL"]
     SHEET_URL = st.secrets["SHEET_URL"]
 except:
-    st.error("Secrets 設定錯誤，請檢查後台 API_URL 與 SHEET_URL")
+    st.error("❌ Secrets 設定錯誤，請確認 Streamlit 後台已填入 API_URL 與 SHEET_URL")
     st.stop()
 
 # 3. 讀取資料函數 (強效繞過快取版)
 @st.cache_data(ttl=1)
 def load_data(url):
     try:
-        csv_url = url.split('/edit')[0] + '/export?format=csv&gid=0'
+        # 強制轉換成 CSV 匯出格式
+        base_url = url.split('/edit')[0]
+        csv_url = f"{base_url}/export?format=csv&gid=0"
+        # 加入隨機參數防止 Google 快取舊資料
         csv_url += f"&refresh={random.randint(1, 99999)}"
         
         data = pd.read_csv(csv_url)
@@ -30,41 +33,54 @@ def load_data(url):
         if data.empty or not all(c in data.columns for c in required_cols):
             return pd.DataFrame(columns=required_cols)
         
-        # 處理數值轉換，避免公式計算延遲導致的錯誤
+        # 處理數值轉換，確保公式計算出的結果能被讀取為數字
         data['金額'] = pd.to_numeric(data['金額'], errors='coerce').fillna(0)
         data['餘額'] = pd.to_numeric(data['餘額'], errors='coerce').fillna(0)
         return data
     except:
         return pd.DataFrame(columns=["日期", "類型", "金額", "項目", "分類", "餘額"])
 
+# 執行讀取
 df = load_data(SHEET_URL)
 
 # 4. 統計計算
 balance = df["餘額"].iloc[-1] if not df.empty else 0
 this_month = datetime.now().strftime("%Y-%m")
-monthly_exp = df[(df['日期'].astype(str).str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum() if not df.empty else 0
+# 確保日期格式為字串以利比對
+df['日期'] = df['日期'].astype(str)
+monthly_exp = df[(df['日期'].str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum() if not df.empty else 0
 
 # 5. 介面顯示
 st.title("👫 我們的帳本 v6.5")
+
 c1, c2 = st.columns(2)
 c1.metric("目前總餘額", f"${balance:,.0f}")
 c2.metric("本月總消費", f"${monthly_exp:,.0f}")
 
 st.divider()
 
-# 6. 新增功能
+# 6. 新增功能表單 (動態顯示分類)
 with st.expander("➕ 新增帳目", expanded=True):
     with st.form("input_form", clear_on_submit=True):
         date = st.date_input("選擇日期", datetime.now())
-        r_type = st.radio("類型", ["支出", "存款"], horizontal=True)
-        cat = st.selectbox("分類", ["餐飲美食", "交通運輸", "居家生活", "休閒娛樂", "購物開銷", "醫療保健", "其他"]) if r_type == "支出" else "(存款)"
-        item = st.text_input("項目描述")
+        r_type = st.radio("交易類型", ["支出", "存款"], horizontal=True)
+        
+        # --- 動態選單邏輯 ---
+        if r_type == "支出":
+            cat = st.selectbox("消費分類", ["餐飲美食", "交通運輸", "居家生活", "休閒娛樂", "購物開銷", "醫療保健", "其他"])
+        else:
+            # 點選存款時，畫面上不顯示選單，背後直接賦值
+            cat = "(存款收入)"
+            
+        item = st.text_input("項目描述 (如：晚餐、薪水)")
         amount = st.number_input("金額", min_value=0, step=1)
+        
         submit = st.form_submit_button("✅ 儲存紀錄")
 
 if submit:
     if item and amount > 0:
-        with st.spinner('同步中...'):
+        with st.spinner('同步至雲端中...'):
+            # 傳送資料給 Google Apps Script (餘額由試算表公式計算，不需傳送)
             payload = {
                 "action": "add",
                 "日期": date.strftime("%Y-%m-%d"),
@@ -76,23 +92,31 @@ if submit:
             try:
                 response = requests.post(API_URL, json=payload, timeout=10)
                 if "Success" in response.text:
-                    st.success("✅ 已儲存！")
+                    st.success("✅ 已成功儲存！")
                     st.cache_data.clear()
-                    time.sleep(1.5) # 給 Google 一點時間計算公式
+                    time.sleep(1.5) # 給 Google 伺服器一點時間運算公式
                     st.rerun()
+                else:
+                    st.error(f"寫入失敗：{response.text}")
             except Exception as e:
                 st.error(f"連線錯誤：{e}")
+    else:
+        st.error("⚠️ 請填寫完整內容！")
 
 st.divider()
 
-# 7. 顯示與刪除功能
+# 7. 顯示歷史紀錄與刪除按鈕
 st.subheader("📋 最近紀錄")
 if not df.empty:
     recent_indices = df.tail(10).index.tolist()
+    
+    # 建立表頭
     h = st.columns([2, 1, 1, 2, 2, 1, 1])
-    for col, head in zip(h, ["日期", "類型", "金額", "項目", "分類", "餘額", "操作"]):
+    headers = ["日期", "類型", "金額", "項目", "分類", "餘額", "操作"]
+    for col, head in zip(h, headers):
         col.write(f"**{head}**")
 
+    # 倒序顯示最新紀錄
     for i in reversed(recent_indices):
         row = df.loc[i]
         cols = st.columns([2, 1, 1, 2, 2, 1, 1])
@@ -103,6 +127,7 @@ if not df.empty:
         cols[4].write(row['分類'])
         cols[5].write(f"${row['餘額']:,.0f}")
         
+        # 刪除按鈕
         if cols[6].button("🗑️", key=f"del_{i}"):
             with st.spinner("正在刪除..."):
                 try:
@@ -112,6 +137,6 @@ if not df.empty:
                         time.sleep(1)
                         st.rerun()
                 except:
-                    st.error("刪除失敗")
+                    st.error("連線超時，請檢查網路")
 else:
-    st.info("尚無資料，請新增第一筆。")
+    st.info("目前尚無資料，請開始記帳吧！")
