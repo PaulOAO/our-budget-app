@@ -17,15 +17,29 @@ except:
 @st.cache_data(ttl=1)
 def load_data(url):
     try:
-        # ... 原本的網址轉換 ...
-        data = pd.read_csv(csv_url)
+        # 強制轉換成 CSV 匯出格式，並指定 gid=0 (第一個工作表)
+        base_url = url.split('/edit')[0]
+        csv_url = f"{base_url}/export?format=csv&gid=0"
         
-        if not data.empty:
-            # 強制將金額與餘額轉為數字，出錯就變 0
-            data['金額'] = pd.to_numeric(data['金額'], errors='coerce').fillna(0)
-            data['餘額'] = pd.to_numeric(data['餘額'], errors='coerce').fillna(0)
+        # 加入隨機參數防止快取
+        import random
+        csv_url += f"&refresh={random.randint(1, 99999)}"
+        
+        # 讀取資料，若遇到空行則跳過
+        data = pd.read_csv(csv_url, on_bad_lines='skip')
+        
+        # 如果讀不到資料，或是欄位不對，回傳空的結構
+        required_cols = ["日期", "類型", "金額", "項目", "分類", "餘額"]
+        if data.empty or not all(c in data.columns for c in required_cols):
+            return pd.DataFrame(columns=required_cols)
+            
+        # 確保數值欄位正確轉換
+        data['金額'] = pd.to_numeric(data['金額'], errors='coerce').fillna(0)
+        data['餘額'] = pd.to_numeric(data['餘額'], errors='coerce').fillna(0)
+        
         return data
-    except:
+    except Exception as e:
+        # 如果發生錯誤，至少回傳一個正確的欄位格式，讓網頁不崩潰
         return pd.DataFrame(columns=["日期", "類型", "金額", "項目", "分類", "餘額"])
 
 df = load_data(SHEET_URL)
