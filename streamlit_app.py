@@ -6,7 +6,7 @@ import time
 import random
 
 # 網頁基礎設定
-st.set_page_config(page_title="👫 我們的甜蜜帳本", layout="centered", page_icon="💰")
+st.set_page_config(page_title="👫 我們的帳本", layout="centered", page_icon="💰")
 
 # 從 Secrets 讀取網址
 try:
@@ -54,7 +54,7 @@ if not df.empty:
     monthly_exp = monthly_df['金額'].sum()
 
 # 顯示介面
-st.title("👫 我們的甜蜜帳本 v5.2")
+st.title("👫 我們的帳本 v5.2")
 c1, c2 = st.columns(2)
 c1.metric("目前總餘額", f"${balance:,.0f}")
 c2.metric("本月總消費", f"${monthly_exp:,.0f}")
