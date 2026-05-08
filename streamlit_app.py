@@ -1,18 +1,21 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import requests
 from datetime import datetime
 
 st.set_page_config(page_title="👫 我們的甜蜜帳本", layout="centered")
 
-# 建立連接
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- 設定區 ---
+# 請將這裡換成剛才 Apps Script 產生的網址
+API_URL = st.secrets["API_URL"]
+# 請將這裡換成你的 Google 試算表「發佈到網路」的 CSV 連結，或繼續使用舊網址
+SHEET_URL = st.secrets["SHEET_URL"]
 
 def load_data():
     try:
-        # 讀取資料並轉為 DataFrame
-        df = conn.read(ttl=0)
-        return df
+        # 這裡改用 pandas 直接讀取 csv 格式
+        csv_url = SHEET_URL.replace('/edit', '/export?format=csv')
+        return pd.read_csv(csv_url)
     except:
         return pd.DataFrame(columns=["日期", "類型", "金額", "項目", "分類", "餘額"])
 
@@ -20,28 +23,22 @@ df = load_data()
 
 st.title("👫 我們的甜蜜帳本")
 
-# 資料清理與計算
+# 計算統計資訊
 balance = 0
 monthly_exp = 0
 if not df.empty:
-    # 確保數值欄位正確
     df['金額'] = pd.to_numeric(df['金額'], errors='coerce').fillna(0)
     df['餘額'] = pd.to_numeric(df['餘額'], errors='coerce').fillna(0)
     balance = df["餘額"].iloc[-1]
-    
     this_month = datetime.now().strftime("%Y-%m")
-    # 確保日期欄位為字串
-    df['日期'] = df['日期'].astype(str)
-    monthly_exp = df[(df['日期'].str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum()
+    monthly_exp = df[(df['日期'].astype(str).str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum()
 
-# 看板顯示
 c1, c2 = st.columns(2)
 c1.metric("目前帳戶餘額", f"${balance:,.0f}")
 c2.metric("本月總消費", f"${monthly_exp:,.0f}")
 
 st.divider()
 
-# 輸入區
 with st.form("input_form", clear_on_submit=True):
     date = st.date_input("選擇日期", datetime.now())
     r_type = st.radio("交易類型", ["支出", "存款"], horizontal=True)
@@ -53,26 +50,23 @@ with st.form("input_form", clear_on_submit=True):
 if submit:
     if item and amount > 0:
         new_balance = balance + amount if r_type == "存款" else balance - amount
-        new_row = pd.DataFrame([{
+        payload = {
             "日期": date.strftime("%Y-%m-%d"),
             "類型": r_type, 
             "金額": float(amount), 
             "項目": item, 
             "分類": cat, 
             "餘額": float(new_balance)
-        }])
+        }
         
-        # 組合並更新 (關鍵修正：確保 index=False)
-        updated_df = pd.concat([df, new_row], ignore_index=True)
+        # 透過 API 寫入
+        response = requests.post(API_URL, json=payload)
         
-        try:
-            # 強制寫入
-            conn.update(data=updated_df)
+        if response.text == "Success":
             st.success("成功存入 Google 雲端！")
-            st.cache_data.clear()
             st.rerun()
-        except Exception as e:
-            st.error("寫入失敗。請檢查 Secrets 裡的網址是否包含 /edit")
+        else:
+            st.error("寫入失敗，請檢查 API 網址")
     else:
         st.error("請填寫完整資訊！")
 
