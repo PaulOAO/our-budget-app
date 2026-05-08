@@ -8,10 +8,9 @@ st.set_page_config(page_title="👫 我們的甜蜜帳本", layout="centered")
 # 建立連接
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 讀取資料
 def load_data():
     try:
-        # 加上 ttl=0 確保每次都抓最新的，避免緩存
+        # 讀取資料
         return conn.read(ttl=0)
     except:
         return pd.DataFrame(columns=["日期", "類型", "金額", "項目", "分類", "餘額"])
@@ -20,11 +19,11 @@ df = load_data()
 
 st.title("👫 我們的甜蜜帳本")
 
-# 計算統計資訊
+# 計算資訊
 balance = 0
 monthly_exp = 0
 if not df.empty:
-    # 確保資料格式正確
+    # 確保金額是數字格式
     df['金額'] = pd.to_numeric(df['金額'], errors='coerce').fillna(0)
     df['餘額'] = pd.to_numeric(df['餘額'], errors='coerce').fillna(0)
     balance = df["餘額"].iloc[-1]
@@ -32,14 +31,14 @@ if not df.empty:
     this_month = datetime.now().strftime("%Y-%m")
     monthly_exp = df[(df['日期'].astype(str).str.startswith(this_month)) & (df['類型'] == '支出')]['金額'].sum()
 
-# 看板
+# 顯示看板
 c1, c2 = st.columns(2)
 c1.metric("目前帳戶餘額", f"${balance:,.0f}")
 c2.metric("本月總消費", f"${monthly_exp:,.0f}")
 
 st.divider()
 
-# 表單
+# 輸入區表單
 with st.form("input_form", clear_on_submit=True):
     date = st.date_input("選擇日期", datetime.now())
     r_type = st.radio("交易類型", ["支出", "存款"], horizontal=True)
@@ -60,15 +59,14 @@ if submit:
             "餘額": float(new_balance)
         }])
         
-        # 重新合併並更新
+        # 重新組合所有資料
         updated_df = pd.concat([df, new_row], ignore_index=True)
         
-        # 改用 update 寫回
+        # 使用最新的更新語法
         conn.update(data=updated_df)
         
         st.success("成功存入 Google 雲端！")
-        # 清除快取並重新整理
-        st.cache_data.clear()
+        st.cache_data.clear() # 清除緩存確保下次讀取最新資料
         st.rerun()
     else:
         st.error("請填寫完整資訊！")
